@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [claude/falling-squares-game-1nn721]
+    branches: [main]
 
 permissions:
   contents: read
