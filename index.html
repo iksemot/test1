@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Falling Squares</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0f0f1a;
+    overflow: hidden;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  #hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 56px;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+  }
+
+  #score-display {
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
+  #score-display span {
+    color: #7df9ff;
+  }
+
+  #lives-display {
+    font-size: 24px;
+    letter-spacing: 4px;
+  }
+
+  #game-area {
+    position: fixed;
+    top: 56px; left: 0; right: 0; bottom: 0;
+  }
+
+  .square {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 0 12px currentColor;
+    transition: transform 0.08s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+
+  .square:active {
+    transform: scale(0.85);
+  }
+
+  .square.pop {
+    animation: pop 0.18s ease-out forwards;
+  }
+
+  @keyframes pop {
+    0%   { transform: scale(1);    opacity: 1; }
+    50%  { transform: scale(1.4);  opacity: 0.7; }
+    100% { transform: scale(0);    opacity: 0; }
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.82);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    gap: 20px;
+  }
+
+  #overlay.hidden { display: none; }
+
+  #overlay h1 {
+    color: #fff;
+    font-size: 36px;
+    font-weight: 800;
+    text-align: center;
+  }
+
+  #overlay h1 span {
+    display: block;
+    font-size: 18px;
+    font-weight: 400;
+    color: #aaa;
+    margin-top: 6px;
+  }
+
+  #final-score {
+    color: #7df9ff;
+    font-size: 52px;
+    font-weight: 900;
+  }
+
+  #start-btn {
+    background: linear-gradient(135deg, #7df9ff, #4a9eff);
+    color: #000;
+    border: none;
+    border-radius: 14px;
+    padding: 16px 48px;
+    font-size: 20px;
+    font-weight: 800;
+    cursor: pointer;
+    letter-spacing: 1px;
+    box-shadow: 0 0 24px rgba(125,249,255,0.4);
+    transition: transform 0.1s, box-shadow 0.1s;
+  }
+
+  #start-btn:active {
+    transform: scale(0.94);
+    box-shadow: 0 0 12px rgba(125,249,255,0.2);
+  }
+
+  #best-score {
+    color: #666;
+    font-size: 15px;
+  }
+
+  #best-score span { color: #aaa; font-weight: 700; }
+
+  .particle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: burst 0.4s ease-out forwards;
+  }
+
+  @keyframes burst {
+    0%   { transform: translate(0,0) scale(1); opacity: 1; }
+    100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="score-display">Wynik: <span id="score-val">0</span></div>
+  <div id="lives-display" aria-label="Życia"></div>
+</div>
+
+<div id="game-area"></div>
+
+<div id="overlay">
+  <h1 id="overlay-title">Falling Squares<span>Klikaj kwadraciki zanim dotrą do dołu!</span></h1>
+  <div id="final-score" style="display:none"></div>
+  <button id="start-btn">GRAJ</button>
+  <div id="best-score">Rekord: <span id="best-val">0</span></div>
+</div>
+
+<script>
+const gameArea   = document.getElementById('game-area');
+const overlay    = document.getElementById('overlay');
+const startBtn   = document.getElementById('start-btn');
+const scoreVal   = document.getElementById('score-val');
+const livesDisp  = document.getElementById('lives-display');
+const overlayTitle = document.getElementById('overlay-title');
+const finalScore = document.getElementById('final-score');
+const bestVal    = document.getElementById('best-val');
+
+const SQUARE_SIZE  = 48;
+const MAX_LIVES    = 3;
+const HEART        = '❤️';
+const BROKEN_HEART = '🖤';
+
+let squares = [];
+let score = 0;
+let lives = MAX_LIVES;
+let best  = parseInt(localStorage.getItem('fsq-best') || '0', 10);
+let spawnTimer  = null;
+let rafId       = null;
+let running     = false;
+let spawnInterval = 800;
+
+bestVal.textContent = best;
+
+function randHue() { return Math.floor(Math.random() * 360); }
+
+function spawnSquare() {
+  const areaW = gameArea.offsetWidth;
+  const maxX  = areaW - SQUARE_SIZE - 4;
+  const x     = Math.floor(Math.random() * maxX) + 2;
+  const hue   = randHue();
+  const speed = 1.5 + Math.random() * 3.5;
+
+  const el = document.createElement('div');
+  el.className = 'square';
+  el.style.cssText = `
+    left: ${x}px;
+    top: -${SQUARE_SIZE}px;
+    background: hsl(${hue},90%,60%);
+    color: hsl(${hue},90%,60%);
+    box-shadow: 0 0 14px hsl(${hue},90%,60%), 0 0 4px hsl(${hue},90%,80%) inset;
+  `;
+
+  const sq = { el, x, y: -SQUARE_SIZE, speed, hue, removed: false };
+
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (!running || sq.removed) return;
+    collectSquare(sq, e.clientX, e.clientY);
+  });
+
+  gameArea.appendChild(el);
+  squares.push(sq);
+}
+
+function collectSquare(sq, cx, cy) {
+  sq.removed = true;
+  score++;
+  scoreVal.textContent = score;
+
+  sq.el.classList.add('pop');
+  burst(cx, cy - 56, sq.hue);
+
+  setTimeout(() => sq.el.remove(), 200);
+  squares = squares.filter(s => s !== sq);
+
+  // speed up gradually
+  spawnInterval = Math.max(300, 800 - Math.floor(score / 5) * 40);
+  clearInterval(spawnTimer);
+  spawnTimer = setInterval(spawnSquare, spawnInterval);
+}
+
+function burst(cx, cy, hue) {
+  for (let i = 0; i < 8; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const angle = (i / 8) * 2 * Math.PI;
+    const dist  = 28 + Math.random() * 24;
+    p.style.cssText = `
+      left: ${cx - 4}px;
+      top: ${cy - 4}px;
+      background: hsl(${hue},90%,65%);
+      --dx: ${Math.cos(angle) * dist}px;
+      --dy: ${Math.sin(angle) * dist}px;
+    `;
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 420);
+  }
+}
+
+function updateLivesDisplay() {
+  let s = '';
+  for (let i = 0; i < MAX_LIVES; i++) {
+    s += i < lives ? HEART : BROKEN_HEART;
+  }
+  livesDisp.textContent = s;
+}
+
+function gameLoop() {
+  if (!running) return;
+  const areaH = gameArea.offsetHeight;
+
+  for (let i = squares.length - 1; i >= 0; i--) {
+    const sq = squares[i];
+    sq.y += sq.speed;
+    sq.el.style.top = sq.y + 'px';
+
+    if (sq.y >= areaH) {
+      sq.removed = true;
+      sq.el.remove();
+      squares.splice(i, 1);
+      lives--;
+      updateLivesDisplay();
+      if (lives <= 0) { gameOver(); return; }
+    }
+  }
+
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  squares.forEach(s => s.el.remove());
+  squares     = [];
+  score       = 0;
+  lives       = MAX_LIVES;
+  spawnInterval = 800;
+
+  scoreVal.textContent = 0;
+  updateLivesDisplay();
+  overlay.classList.add('hidden');
+
+  running = true;
+  spawnSquare();
+  spawnTimer = setInterval(spawnSquare, spawnInterval);
+  rafId = requestAnimationFrame(gameLoop);
+}
+
+function gameOver() {
+  running = false;
+  clearInterval(spawnTimer);
+  cancelAnimationFrame(rafId);
+
+  if (score > best) {
+    best = score;
+    localStorage.setItem('fsq-best', best);
+    bestVal.textContent = best;
+  }
+
+  squares.forEach(s => s.el.remove());
+  squares = [];
+
+  overlayTitle.innerHTML = 'Koniec gry!<span>Twój wynik</span>';
+  finalScore.style.display = '';
+  finalScore.textContent = score;
+  startBtn.textContent = 'ZAGRAJ PONOWNIE';
+  overlay.classList.remove('hidden');
+}
+
+startBtn.addEventListener('click', startGame);
+updateLivesDisplay();
+</script>
+</body>
+</html>
